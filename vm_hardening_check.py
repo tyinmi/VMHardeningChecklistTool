@@ -9,6 +9,11 @@ import subprocess
 import datetime
 import sys
 import os
+import re
+
+
+# Configuration constants
+PASSWORD_MAX_DAYS_THRESHOLD = 90  # Maximum acceptable password age in days
 
 
 class SecurityCheck:
@@ -71,9 +76,11 @@ class VMHardeningChecker:
             # Check iptables as fallback
             returncode, stdout, stderr = self.run_command(["iptables", "-L", "-n"])
             if returncode == 0 and stdout.strip():
-                # Check if there are any rules beyond default
-                lines = [l for l in stdout.split('\n') if l.strip() and not l.startswith('Chain')]
-                if len(lines) > 3:  # More than just headers
+                # Check if there are meaningful rules beyond default empty chains
+                # Default empty output has 3 chains (INPUT, FORWARD, OUTPUT) with headers only
+                lines = [l for l in stdout.split('\n') if l.strip() and not l.startswith('Chain') 
+                        and not l.startswith('target')]
+                if len(lines) > 0:  # Has actual rules
                     check.set_result(True, "iptables rules are configured")
                 else:
                     check.set_result(False, "No firewall rules configured")
@@ -86,17 +93,15 @@ class VMHardeningChecker:
         """Check if the operating system is up to date."""
         check = SecurityCheck("OS Updates", "Verify that the system has no pending security updates")
         
-        # Update package list first
-        returncode, stdout, stderr = self.run_command(["apt-get", "update"], shell=False)
-        
-        # Check for available updates
-        returncode, stdout, stderr = self.run_command(
-            "apt list --upgradable 2>/dev/null | grep -v 'Listing'", shell=True
-        )
+        # Check for available updates without modifying system state
+        # Note: This relies on existing package cache; run 'apt update' separately if needed
+        returncode, stdout, stderr = self.run_command(["apt", "list", "--upgradable"])
         
         if returncode == 0 and stdout.strip():
-            updates = stdout.strip().split('\n')
-            num_updates = len([u for u in updates if u.strip()])
+            # Filter out the 'Listing...' header and empty lines
+            updates = [line for line in stdout.strip().split('\n') 
+                      if line.strip() and not line.startswith('Listing')]
+            num_updates = len(updates)
             if num_updates > 0:
                 check.set_result(False, f"{num_updates} package(s) available for update")
             else:
@@ -160,11 +165,16 @@ class VMHardeningChecker:
                 # Check if root login is disabled
                 root_login_disabled = False
                 for line in content.split('\n'):
-                    line = line.strip()
+                    # Remove comments
+                    line = line.split('#')[0].strip()
                     if line.startswith('PermitRootLogin'):
-                        if 'no' in line.lower():
-                            root_login_disabled = True
-                        break
+                        # Extract the value after PermitRootLogin
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            value = parts[1].lower()
+                            if value in ('no', 'prohibit-password', 'without-password'):
+                                root_login_disabled = True
+                            break
                 
                 if root_login_disabled:
                     check.set_result(True, "SSH root login is disabled")
@@ -194,7 +204,9 @@ class VMHardeningChecker:
                 try:
                     with open(config_file, 'r') as f:
                         content = f.read()
-                        if 'APT::Periodic::Unattended-Upgrade "1"' in content:
+                        # Use regex to match the config line with flexible formatting
+                        pattern = r'APT::Periodic::Unattended-Upgrade\s+"?1"?'
+                        if re.search(pattern, content):
                             check.set_result(True, "Automatic security updates are enabled")
                         else:
                             check.set_result(False, "unattended-upgrades installed but not configured")
@@ -227,13 +239,14 @@ class VMHardeningChecker:
                 max_days_value = None
                 
                 for line in content.split('\n'):
-                    line = line.strip()
+                    # Remove comments
+                    line = line.split('#')[0].strip()
                     if line.startswith('PASS_MAX_DAYS'):
                         parts = line.split()
                         if len(parts) >= 2:
                             try:
                                 max_days_value = int(parts[1])
-                                if max_days_value <= 90:  # Reasonable maximum
+                                if max_days_value <= PASSWORD_MAX_DAYS_THRESHOLD:
                                     has_max_days = True
                             except ValueError:
                                 pass
