@@ -45,15 +45,11 @@ class VMHardeningChecker:
         self.checks = []
         self.report_file = f"vm_hardening_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     
-    def run_command(self, command, shell=False):
+    def run_command(self, command):
         """Run a system command and return the output."""
         try:
-            if shell:
-                result = subprocess.run(command, shell=True, capture_output=True, 
-                                       text=True, timeout=30)
-            else:
-                result = subprocess.run(command, capture_output=True, text=True, 
-                                       timeout=30)
+            result = subprocess.run(command, capture_output=True, text=True, 
+                                   timeout=30)
             return result.returncode, result.stdout, result.stderr
         except subprocess.TimeoutExpired:
             return -1, "", "Command timed out"
