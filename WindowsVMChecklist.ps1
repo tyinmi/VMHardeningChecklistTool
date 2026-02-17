@@ -17,7 +17,7 @@ if ($build -ge 22000) {
 }
 
 # Check 2: System Uptime
-$uptime = (Get-Date) - (Get-WmiObject Win32_OperatingSystem).LastBootUpTime
+$uptime = (Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
 Write-Host "[PASS] 2. System Uptime: $($uptime.Days) days, $($uptime.Hours) hours"
 $passCount++
 
@@ -44,12 +44,14 @@ if ($pending -eq 0) {
     Write-Host "[PASS] 5. Pending Updates: None"
     $passCount++
 } else {
-    Write-Host "[WARN] 5. Pending Updates: $pending"
+    Write-Host "[FAIL] 5. Pending Updates: $pending"
+    $failCount++
 }
 
 # Check 6: Automatic Updates Enabled
-$au = Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' -Name AUOptions
-if ($au.AUOptions -ge 3) {
+$auPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
+$au = Get-ItemProperty -Path $auPath -Name AUOptions -ErrorAction SilentlyContinue
+if ($null -ne $au -and $au.AUOptions -ge 3) {
     Write-Host "[PASS] 6. Automatic Updates: Enabled"
     $passCount++
 } else {
